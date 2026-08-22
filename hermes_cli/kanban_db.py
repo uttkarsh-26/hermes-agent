@@ -95,6 +95,41 @@ from toolsets import get_toolset_names
 _log = logging.getLogger(__name__)
 
 
+class KanbanDisabledError(RuntimeError):
+    """Raised when the profile-wide Kanban master switch is off."""
+
+
+def kanban_enabled() -> bool:
+    """Return whether Kanban is enabled for the active Hermes profile."""
+    try:
+        if (kanban_home() / "KANBAN_DISABLED").is_file():
+            return False
+    except Exception:
+        pass
+    raw_env = os.environ.get("HERMES_KANBAN_ENABLED")
+    if raw_env is not None:
+        return raw_env.strip().lower() not in {"0", "false", "no", "off"}
+    try:
+        from hermes_cli.config import load_config
+
+        cfg = load_config()
+    except Exception:
+        return True
+    kcfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
+    raw = kcfg.get("enabled", True) if isinstance(kcfg, dict) else True
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(raw)
+
+
+def require_kanban_enabled() -> None:
+    """Fail before any Kanban database or metadata path is created."""
+    if not kanban_enabled():
+        raise KanbanDisabledError(
+            "Kanban is disabled by config (kanban.enabled=false)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -663,6 +698,7 @@ def set_current_board(slug: str) -> Path:
     so that ``hermes kanban boards switch <typo>`` returns an error
     instead of silently pointing at nothing.
     """
+    require_kanban_enabled()
     _assert_not_delegated_child_mutation()
     normed = _normalize_board_slug(slug)
     if not normed:
@@ -675,6 +711,7 @@ def set_current_board(slug: str) -> Path:
 
 def clear_current_board() -> None:
     """Remove ``<root>/kanban/current`` so the active board reverts to ``default``."""
+    require_kanban_enabled()
     _assert_not_delegated_child_mutation()
     try:
         current_board_path().unlink()
@@ -888,6 +925,7 @@ def write_board_metadata(
     project scope; a value sets it (not validated here — the caller resolves
     it against ``projects_db``).
     """
+    require_kanban_enabled()
     _assert_not_delegated_child_mutation()
     slug = _normalize_board_slug(board) or DEFAULT_BOARD
     meta = read_board_metadata(slug)
@@ -936,6 +974,7 @@ def create_board(
     malformed slug; returns the existing metadata (not an error) if the
     board already exists — matching ``mkdir -p`` semantics.
     """
+    require_kanban_enabled()
     normed = _normalize_board_slug(slug)
     if not normed:
         raise ValueError("board slug is required")
@@ -1008,6 +1047,7 @@ def remove_board(slug: str, *, archive: bool = True) -> dict:
     Returns a summary dict describing what happened (``{"slug", "action",
     "new_path"}``).
     """
+    require_kanban_enabled()
     _assert_not_delegated_child_mutation()
     normed = _normalize_board_slug(slug)
     if not normed:
@@ -2347,6 +2387,7 @@ def connect(
       ``HERMES_KANBAN_DB`` env → ``HERMES_KANBAN_BOARD`` env →
       ``<root>/kanban/current`` → ``default``.
     """
+    require_kanban_enabled()
     if db_path is not None:
         path = db_path
     else:
@@ -2513,6 +2554,7 @@ def init_db(
     external tools that upgrade an old DB file — can call this to
     force re-migration.
     """
+    require_kanban_enabled()
     if db_path is not None:
         path = db_path
     else:

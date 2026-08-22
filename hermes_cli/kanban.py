@@ -1027,6 +1027,13 @@ def kanban_command(args: argparse.Namespace) -> int:
 
     Returns a shell-style exit code (0 on success, non-zero on error).
     """
+    if not kb.kanban_enabled():
+        print(
+            "kanban: Kanban is disabled by config (kanban.enabled=false)",
+            file=sys.stderr,
+        )
+        return 2
+
     action = getattr(args, "kanban_action", None)
     if not action:
         # No subaction given: print help via the stored parser reference.
@@ -3373,6 +3380,9 @@ def run_slash(rest: str) -> str:
     """
     import io
     import contextlib
+
+    if not kb.kanban_enabled():
+        return "Kanban is disabled by config (kanban.enabled=false)."
 
     tokens = shlex.split(rest) if rest and rest.strip() else []
 

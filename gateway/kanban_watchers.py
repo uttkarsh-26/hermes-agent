@@ -47,7 +47,9 @@ def _resolve_auto_decompose_settings(
     except Exception:
         return False, 3
     kcfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
-    enabled = bool(kcfg.get("auto_decompose", True))
+    enabled = bool(kcfg.get("enabled", True)) and bool(
+        kcfg.get("auto_decompose", True)
+    )
     try:
         per_tick = int(kcfg.get("auto_decompose_per_tick", 3) or 3)
     except (TypeError, ValueError):
@@ -209,6 +211,9 @@ class GatewayKanbanWatchersMixin:
             from hermes_cli import kanban_db as _kb
         except Exception:
             logger.warning("kanban notifier: kanban_db not importable; notifier disabled")
+            return
+        if not _kb.kanban_enabled():
+            logger.info("kanban notifier: disabled via config kanban.enabled=false")
             return
 
         # "status" covers dashboard drag-drop and `_set_status_direct()`
@@ -1217,6 +1222,9 @@ class GatewayKanbanWatchersMixin:
             logger.warning("kanban dispatcher: cannot load config (%s); disabled", exc)
             return
         kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
+        if not kanban_cfg.get("enabled", True):
+            logger.info("kanban dispatcher: disabled via config kanban.enabled=false")
+            return
         if not kanban_cfg.get("dispatch_in_gateway", True):
             logger.info(
                 "kanban dispatcher: disabled via config kanban.dispatch_in_gateway=false"

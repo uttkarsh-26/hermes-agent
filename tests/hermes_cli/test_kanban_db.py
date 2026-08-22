@@ -29,6 +29,19 @@ def kanban_home(tmp_path, monkeypatch):
     return home
 
 
+@pytest.fixture
+def disabled_kanban_home(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / "config.yaml").write_text(
+        "kanban:\n  enabled: false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    return home
+
+
 def _init_git_repo(repo: Path) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True, text=True)
@@ -42,6 +55,40 @@ def _init_git_repo(repo: Path) -> None:
 # ---------------------------------------------------------------------------
 # Schema / init
 # ---------------------------------------------------------------------------
+
+
+def test_connect_refuses_when_kanban_is_disabled_without_creating_db(
+    disabled_kanban_home,
+):
+    with pytest.raises(RuntimeError, match="Kanban is disabled"):
+        kb.connect()
+
+    assert not (disabled_kanban_home / "kanban.db").exists()
+
+
+def test_create_board_refuses_when_kanban_is_disabled_without_writing_metadata(
+    disabled_kanban_home,
+):
+    with pytest.raises(RuntimeError, match="Kanban is disabled"):
+        kb.create_board("forbidden")
+
+    assert not (disabled_kanban_home / "kanban" / "boards" / "forbidden").exists()
+
+
+def test_shared_disable_sentinel_overrides_default_enabled_config(
+    tmp_path,
+    monkeypatch,
+):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / "KANBAN_DISABLED").touch()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    with pytest.raises(RuntimeError, match="Kanban is disabled"):
+        kb.connect()
+
+    assert not (home / "kanban.db").exists()
 
 
 

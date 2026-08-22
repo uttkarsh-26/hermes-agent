@@ -24,6 +24,19 @@ def kanban_home(tmp_path, monkeypatch):
     return home
 
 
+@pytest.fixture
+def disabled_kanban_home(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / "config.yaml").write_text(
+        "kanban:\n  enabled: false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    return home
+
+
 # ---------------------------------------------------------------------------
 # Workspace flag parsing
 # ---------------------------------------------------------------------------
@@ -37,6 +50,15 @@ def kanban_home(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # run_slash smoke tests (end-to-end via the same entry both CLI and gateway use)
 # ---------------------------------------------------------------------------
+
+
+def test_run_slash_refuses_when_kanban_is_disabled_without_creating_db(
+    disabled_kanban_home,
+):
+    output = kc.run_slash("list")
+
+    assert "kanban is disabled" in output.lower()
+    assert not (disabled_kanban_home / "kanban.db").exists()
 
 
 
