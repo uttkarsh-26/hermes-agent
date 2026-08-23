@@ -106,6 +106,32 @@ class TestOpenCodeZenOxReasoning:
         assert other == {}
 
 
+class TestOpenCodeGoOxReasoning:
+    """The Go-specific Ox Alpha slug must receive the native effort knob."""
+
+    def test_max_effort_is_emitted_for_go_slug(self, opencode_go_profile):
+        extra_body, top_level = opencode_go_profile.build_api_kwargs_extras(
+            reasoning_config={"enabled": True, "effort": "max"},
+            model="ox-alpha-free",
+        )
+        assert extra_body == {}
+        assert top_level == {"reasoning_effort": "max"}
+
+    def test_max_reaches_chat_completions_request(self, opencode_go_profile):
+        from agent.transports.chat_completions import ChatCompletionsTransport
+
+        kwargs = ChatCompletionsTransport().build_kwargs(
+            model="ox-alpha-free",
+            messages=[{"role": "user", "content": "ping"}],
+            tools=None,
+            provider_profile=opencode_go_profile,
+            reasoning_config={"enabled": True, "effort": "max"},
+            base_url="https://opencode.ai/zen/go/v1",
+        )
+        assert "extra_body" not in kwargs
+        assert kwargs["reasoning_effort"] == "max"
+
+
 class TestOpenCodeGoKimiReasoning:
     """Kimi K2 models use Moonshot's thinking + reasoning_effort shape on OpenCode Go."""
 

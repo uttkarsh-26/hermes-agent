@@ -73,6 +73,9 @@ class OpenCodeGoProfile(ProviderProfile):
         extra_body: dict[str, Any] = {}
         top_level: dict[str, Any] = {}
 
+        if _flat_model_name(model) == "ox-alpha-free":
+            return _build_ox_alpha_reasoning_extras(reasoning_config, model)
+
         if _is_glm_5_2_model(model):
             # GLM-5.2 on OpenCode Go uses its native OpenAI-compatible
             # reasoning_effort knob (high/max — declared in
@@ -161,13 +164,13 @@ class OpenCodeGoProfile(ProviderProfile):
 def _build_ox_alpha_reasoning_extras(
     reasoning_config: dict | None, model: str | None
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Shared Ox Alpha (x-preview-f-free) reasoning_effort translation.
+    """Shared Ox Alpha reasoning_effort translation for Zen/Free/Go slugs.
 
-    Used by both the opencode-zen profile and the opencode-free keyless
-    profile — the model is reachable through either provider and the wire
-    contract is identical (low/high/max only; anything else 400s).
+    Shared by the opencode-zen, opencode-free keyless, and opencode-go
+    profiles. The route-specific model IDs differ, but the wire contract is
+    identical (low/high/max only; anything else 400s).
     """
-    if _flat_model_name(model) != "x-preview-f-free":
+    if _flat_model_name(model) not in {"x-preview-f-free", "ox-alpha-free"}:
         return {}, {}
     if not isinstance(reasoning_config, dict):
         return {}, {}
