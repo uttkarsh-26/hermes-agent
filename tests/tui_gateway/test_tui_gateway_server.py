@@ -19931,6 +19931,33 @@ def test_get_usage_perf_readouts_present():
     assert usage["avg_tps"] == 50.0  # true throughput sum(out)/sum(lat), not mean of ratios
 
 
+def test_get_usage_tps_is_the_decode_rate_not_the_whole_call_rate():
+    """avg_tps excludes TTFT (output / decode seconds); avg_latency_s stays whole-call.
+
+    Same window as the readout above, now with the ttfb lane: 500 tokens over 2 decode
+    seconds is 250 t/s, where the whole-call denominator reported 500/15 = 33 t/s.
+    """
+    from collections import deque
+
+    class _DecodeAgent:
+        model = "x"
+        _api_latency_history = deque([10.0, 5.0], maxlen=10)
+        _api_output_history = deque([200, 300], maxlen=10)
+        _api_ttfb_history = deque([9.0, 4.0], maxlen=10)
+
+    usage = server._get_usage(_DecodeAgent())
+    assert usage["avg_latency_s"] == 7.5
+    assert usage["avg_tps"] == 250.0
+
+    class _SameWindowWithoutTtfb:
+        model = "x"
+        _api_latency_history = deque([10.0, 5.0], maxlen=10)
+        _api_output_history = deque([200, 300], maxlen=10)
+        _api_ttfb_history = deque([None, None], maxlen=10)
+
+    assert server._get_usage(_SameWindowWithoutTtfb())["avg_tps"] == 33.3  # TTFT not excluded
+
+
 def test_get_usage_perf_readouts_omitted_without_data():
     """Zero cache reads / empty history omit the keys — never fabricate 0s."""
 

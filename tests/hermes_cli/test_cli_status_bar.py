@@ -615,10 +615,12 @@ class TestCacheHitRate:
 
 
 class TestRollingLatencyVelocity:
-    def _with_history(self, cli_obj, latencies, outputs):
+    def _with_history(self, cli_obj, latencies, outputs, ttfbs=None):
         from collections import deque
         cli_obj.agent._api_latency_history = deque(latencies, maxlen=10)
         cli_obj.agent._api_output_history = deque(outputs, maxlen=10)
+        if ttfbs is not None:
+            cli_obj.agent._api_ttfb_history = deque(ttfbs, maxlen=10)
         return cli_obj
 
     def test_latency_and_tps_shown_in_wide_terminal(self):
@@ -666,6 +668,39 @@ class TestRollingLatencyVelocity:
         snapshot = cli_obj._get_status_bar_snapshot()
         assert snapshot["avg_latency"] is None
         assert snapshot["avg_velocity"] is None
+
+    def test_velocity_is_the_decode_rate_when_ttfb_was_recorded(self):
+        """The t/s readout excludes TTFT (output / decode seconds); latency stays whole-call."""
+        cli_obj = _attach_agent(
+            _make_cli(),
+            prompt_tokens=10_000, completion_tokens=2_000, total_tokens=12_000,
+            api_calls=5, context_tokens=12_000, context_length=200_000,
+        )
+        self._with_history(cli_obj, [10.0, 5.0], [200, 300], ttfbs=[9.0, 4.0])
+
+        snapshot = cli_obj._get_status_bar_snapshot()
+        text = cli_obj._build_status_bar_text(width=140)
+
+        # (200+300) tokens over (1+1) decode seconds — not 500/15 = 33 t/s of whole-call clock
+        assert snapshot["avg_velocity"] > 500 / 15
+        assert round(snapshot["avg_velocity"]) == 250
+        assert snapshot["avg_latency"] == 7.5  # mean whole-call latency (2+4)/2 semantics kept
+        assert "\u2191 250 t/s" in text
+        assert "\u25f7 7.5s" in text
+
+    def test_velocity_falls_back_to_whole_call_without_ttfb(self):
+        """A non-streaming window (no ttfb lane) keeps the pre-existing whole-call rate."""
+        cli_obj = _attach_agent(
+            _make_cli(),
+            prompt_tokens=10_000, completion_tokens=2_000, total_tokens=12_000,
+            api_calls=5, context_tokens=12_000, context_length=200_000,
+        )
+        self._with_history(cli_obj, [2.0, 4.0], [120, 180], ttfbs=[None, None])
+
+        snapshot = cli_obj._get_status_bar_snapshot()
+
+        assert round(snapshot["avg_velocity"]) == 50  # 300 / 6.0
+        assert snapshot["avg_latency"] == 3.0
 
 
 class TestCacheHitBaselineReset:

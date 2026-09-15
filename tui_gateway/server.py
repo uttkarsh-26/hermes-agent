@@ -33,6 +33,7 @@ from agent.replay_cleanup import canonicalize_replay_history
 from agent.compaction_display import project_compaction_message_for_display  # noqa: F401
 from agent.skill_commands import describe_skill_invocation  # noqa: F401
 from agent.conversation_loop import INTERRUPT_WAITING_FOR_MODEL_PREFIX  # noqa: F401
+from agent.turn_usage import throughput_rate  # status-bar decode rate (TTFT excluded)
 from tui_gateway import git_probe
 from tui_gateway._env import env_float, env_int
 from tui_gateway.turn_marker import clear_turn_marker, read_turn_marker, record_turn_start  # noqa: F401
@@ -1972,11 +1973,15 @@ def _get_usage(agent) -> dict:
         if _prompt_total > 0 and _cache_read > 0:
             usage["cache_hit_pct"] = max(0, min(100, round(_cache_read / _prompt_total * 100)))
     with contextlib.suppress(Exception):  # a status-bar readout must never break usage reporting
+        # Velocity is the DECODE rate (output tokens / decode seconds, TTFT excluded) via
+        # agent.turn_usage.throughput_rate: the whole-call wall clock would fold provider
+        # queue + prefill into the denominator and understate the lane. Latency stays whole-call.
         _lhist = list(getattr(agent, "_api_latency_history", []) or [])
         _ohist = list(getattr(agent, "_api_output_history", []) or [])
+        _thist = list(getattr(agent, "_api_ttfb_history", []) or [])
         if _n := min(len(_lhist), len(_ohist)):
             _total_lat = sum(_lhist[-_n:])
-            _avg_vel = (sum(_ohist[-_n:]) / _total_lat) if _total_lat > 0 else None
+            _avg_vel = throughput_rate(_lhist, _ohist, _thist)
             for _key, _val in (("avg_latency_s", _total_lat / _n), ("avg_tps", _avg_vel)):
                 if _val is not None and _val == _val and 0 < _val < 1e6:  # guard NaN/negative/absurd provider timings
                     usage[_key] = round(float(_val), 1)

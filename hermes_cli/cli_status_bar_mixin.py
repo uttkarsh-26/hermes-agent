@@ -16,6 +16,8 @@ from agent.pet import render as pet_render
 from hermes_cli.banner import _format_context_length
 from typing import Any, Dict, Optional
 
+from agent.turn_usage import throughput_rate  # status-bar decode-rate (TTFT excluded)
+
 _SB = "class:status-bar"
 _DIM = "class:status-bar-dim"
 _STRONG = "class:status-bar-strong"
@@ -374,19 +376,20 @@ class CLIStatusBarMixin:
         snapshot["cache_hit_pct"] = pct
         snapshot["cache_hit_label"] = f"{pct:.0f}%" if pct is not None else ""
 
-        # Rolling avg latency / velocity over the deques kept by agent/conversation_loop.py
-        # (hidden on Codex app-server, which reports no latency).
+        # Rolling avg latency / decode velocity over the deques kept by agent/turn_usage.py
+        # (hidden on Codex app-server, which reports no latency). Velocity is the DECODE rate
+        # (output tokens / decode seconds, TTFT excluded) — the whole-call wall clock would
+        # fold provider queue + prefill into the denominator and understate the lane.
         avg_lat = avg_vel = None
         try:
             lhist = list(getattr(agent, "_api_latency_history", []) or [])
             ohist = list(getattr(agent, "_api_output_history", []) or [])
+            thist = list(getattr(agent, "_api_ttfb_history", []) or [])
             n = min(len(lhist), len(ohist))  # appended together; keep aligned
             if n:
-                lhist, ohist = lhist[-n:], ohist[-n:]
-                total_lat = sum(lhist)
-                # Mean for latency; sum/sum for velocity (true throughput, not mean of ratios).
-                avg_lat = _finite(total_lat / n)
-                avg_vel = _finite(sum(ohist) / total_lat if total_lat > 0 else None)
+                # Mean for latency (still whole-call); decode rate for velocity.
+                avg_lat = _finite(sum(lhist[-n:]) / n)
+                avg_vel = _finite(throughput_rate(lhist, ohist, thist))
         except Exception:
             avg_lat = avg_vel = None
         snapshot["avg_latency"] = float(avg_lat) if avg_lat is not None else None

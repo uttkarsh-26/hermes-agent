@@ -2139,8 +2139,12 @@ _USAGE_STATE: Dict[str, Any] = {
     "session_cost_status": "unknown",
     "session_cost_source": "none",
     # Status-bar latency/velocity history (last 10 calls), shared by loop + codex_runtime.
+    # The ttfb lane is sample-aligned with the other two: throughput_rate() divides output
+    # tokens by DECODE seconds (latency - ttfb), so the displayed t/s is not diluted by
+    # provider queue + prefill.
     "_api_latency_history": lambda: deque(maxlen=10),
     "_api_output_history": lambda: deque(maxlen=10),
+    "_api_ttfb_history": lambda: deque(maxlen=10),
 }
 
 # Constructor params stored verbatim under the same name.

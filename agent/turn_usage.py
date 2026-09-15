@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from agent.image_token_cost import calibrate_from_usage
 from agent.usage_anchor import capture_usage_anchor, set_usage_anchor
@@ -36,6 +36,64 @@ def _loop_mod():
     import agent.conversation_loop as _cl
 
     return _cl
+
+
+def throughput_rate(
+    latencies: Iterable[Any], outputs: Iterable[Any], ttfbs: Optional[Iterable[Any]] = None,
+) -> Optional[float]:
+    """Output tokens per DECODE second over one aligned window of API calls.
+
+    A call's decode time is ``latency - ttfb`` when it has a usable time-to-first-token
+    (``0 < ttfb < latency``); samples without one (non-streaming, a stream that died before
+    its first chunk, an absurd stamp) fall back to the whole-call latency, so a mixed window
+    is never overstated. This is the rate a provider's own ``tokens/sec`` reports — dividing
+    by the whole-call wall clock folds provider queue + prefill into the denominator and
+    understates a lane that truly decodes 2-3x faster. None when the aligned window is empty
+    or carries no positive decode time.
+    """
+    lats = list(latencies or [])
+    outs = list(outputs or [])
+    stamps = list(ttfbs or [])
+    n = min(len(lats), len(outs))
+    if not n:
+        return None
+    # All three deques are appended together per API call. A short/absent ttfb lane still
+    # yields the full window (with unknown decode times) — never a silently shorter one.
+    if stamps:
+        n = min(n, len(stamps))
+        stamps = stamps[-n:]
+    else:
+        stamps = [None] * n
+    total_out = 0
+    total_decode = 0.0
+    for latency, output, ttfb in zip(lats[-n:], outs[-n:], stamps):
+        try:
+            decode = float(latency)
+        except (TypeError, ValueError):
+            continue
+        if not 0 < decode < 1e6:  # negative/absurd provider timings carry no signal
+            continue
+        if isinstance(ttfb, (int, float)) and 0 < ttfb < decode:
+            decode -= float(ttfb)
+        try:
+            total_out += int(output or 0)
+        except (TypeError, ValueError):
+            continue
+        total_decode += decode
+    return (total_out / total_decode) if total_decode > 0 else None
+
+
+def _ttfb_seconds(agent: Any, api_start_time: Any) -> Optional[float]:
+    """This call's time-to-first-token, or None when either end of the measurement is
+    missing (non-streamed attempts stamp nothing; the loop clears the stamp per attempt)."""
+    stamp = getattr(agent, "_last_api_first_chunk_at", None)
+    if stamp is None or api_start_time is None:
+        return None
+    try:
+        ttfb = float(stamp) - float(api_start_time)
+    except (TypeError, ValueError):
+        return None
+    return ttfb if ttfb > 0 else None
 
 
 def _fold_moa_usage(agent, canonical_usage):
@@ -66,10 +124,14 @@ def _fold_moa_usage(agent, canonical_usage):
 def record_response_usage(
     agent: Any, response: Any, *, messages: List[Dict[str, Any]], api_call_count: int,
     api_duration: float, compression_attempts: int, max_compression_attempts: int,
+    api_start_time: Any = None,
 ) -> ResponseUsageOutcome:
     """Fold ``response.usage`` into compressor, anchors, session counters, state.db
     and the API-call log line (see module docstring). No-usage responses only
-    consume a pending compaction verdict. Returns the loop-visible outcome."""
+    consume a pending compaction verdict. Returns the loop-visible outcome.
+
+    ``api_start_time`` feeds the status-bar throughput lane: paired with this attempt's
+    first-chunk stamp it yields the TTFB that ``throughput_rate`` subtracts."""
     rearmed = False
     compressor = agent.context_compressor
     # Count every completed provider attempt, including providers that omit usage.
@@ -171,7 +233,8 @@ def record_response_usage(
     agent.session_cache_read_tokens += canonical_usage.cache_read_tokens
     agent.session_cache_write_tokens += canonical_usage.cache_write_tokens
     agent.session_reasoning_tokens += canonical_usage.reasoning_tokens
-    # Rolling history for status-bar averages (last 10).
+    # Rolling history for status-bar averages (last 10), one sample per completed API
+    # call — appended together so the latency / output / ttfb lanes stay aligned.
     with suppress(Exception):
         hist = getattr(agent, "_api_latency_history", None)
         if hist is not None:
@@ -179,6 +242,9 @@ def record_response_usage(
         ohist = getattr(agent, "_api_output_history", None)
         if ohist is not None:
             ohist.append(int(canonical_usage.output_tokens or 0))
+        thist = getattr(agent, "_api_ttfb_history", None)
+        if thist is not None:
+            thist.append(_ttfb_seconds(agent, api_start_time))
 
     _cache_pct = ""
     if canonical_usage.cache_read_tokens and prompt_tokens:
